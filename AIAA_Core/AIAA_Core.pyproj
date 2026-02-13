@@ -4,7 +4,7 @@
     <SchemaVersion>2.0</SchemaVersion>
     <ProjectGuid>8418c3e3-d811-4197-8e08-a9d58d933401</ProjectGuid>
     <ProjectHome>.</ProjectHome>
-    <StartupFile>src\config.py</StartupFile>
+    <StartupFile>main.py</StartupFile>
     <SearchPath>
     </SearchPath>
     <WorkingDirectory>.</WorkingDirectory>
