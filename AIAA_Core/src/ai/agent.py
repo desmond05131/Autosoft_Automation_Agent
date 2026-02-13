@@ -1,25 +1,49 @@
 ﻿import ollama
 import json
+import re
 from src.config import Config
 
-# Prompt engineering to ensure AI returns strictly JSON
+# System prompt optimized for DeepSeek to force JSON
 SYSTEM_PROMPT = """
-You are an AutoCount Assistant Router. 
-Identify the user's intent and extract parameters.
-Return ONLY valid JSON. No markdown.
+You are an API Router. You MUST return ONLY a JSON object. 
+Do not output any reasoning, markdown formatting, or explanations.
+Just the raw JSON.
 
-Available Tools:
-1. check_stock (args: item_code)
-2. check_debtor_info (args: debtor_name_or_code)
-3. check_top_debtors (args: limit)
-4. check_sales (args: date_text (e.g. "today", "2026-01-29"))
+User Intent Schema:
+{
+  "intent": "check_stock" | "check_debtor_info" | "check_top_debtors" | "check_sales" | "unknown",
+  "args": { ... }
+}
 
-Example Output:
-{"intent": "check_stock", "args": {"item_code": "IPHONE"}}
+Examples:
+User: "Check stock for iPhone"
+JSON: {"intent": "check_stock", "args": {"item_code": "iPhone"}}
+
+User: "Top 5 debtors"
+JSON: {"intent": "check_top_debtors", "args": {"limit": 5}}
+
+User: "Sales for today"
+JSON: {"intent": "check_sales", "args": {"date_text": "today"}}
 """
 
+def clean_deepseek_response(text):
+    """Removes <think> tags and finds the first valid JSON object"""
+    # 1. Remove <think>...</think> sections if present
+    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
+    
+    # 2. Try to find JSON inside code blocks ```json ... ```
+    json_block = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
+    if json_block:
+        return json_block.group(1)
+        
+    # 3. If no blocks, try to find the first { ... } structure
+    json_match = re.search(r'\{.*\}', text, re.DOTALL)
+    if json_match:
+        return json_match.group(0)
+        
+    return text
+
 def interpret_intent(user_text):
-    """Sends prompt to Ollama and parses JSON response."""
     try:
         response = ollama.chat(
             model=Config.OLLAMA_MODEL,
@@ -29,11 +53,15 @@ def interpret_intent(user_text):
             ]
         )
         
-        content = response['message']['content']
-        # Clean potential markdown code blocks
-        content = content.replace("```json", "").replace("```", "").strip()
+        raw_content = response['message']['content']
+        cleaned_content = clean_deepseek_response(raw_content)
         
-        return json.loads(content)
+        # Parse JSON
+        return json.loads(cleaned_content)
+        
+    except json.JSONDecodeError:
+        print(f"❌ JSON Parse Error. Raw AI Output: {raw_content}")
+        return {"intent": "unknown", "args": {}}
     except Exception as e:
-        print(f"🧠 AI Error: {e}")
+        print(f"🧠 AI Critical Error: {e}")
         return {"intent": "unknown", "args": {}}

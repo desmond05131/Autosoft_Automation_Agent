@@ -1,12 +1,8 @@
 ﻿import logging
-import sys
-
-# 1. Standard Imports (Must be at the top)
-from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, filters
+from telegram.ext import ApplicationBuilder, CommandHandler, MessageHandler, CallbackQueryHandler, filters
 from src.config import Config
-from src.bot.handlers import start_command, handle_text_message
+from src.bot.handlers import start_command, handle_text_message, handle_button_click
 
-# 2. Setup Logging
 logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
@@ -19,27 +15,20 @@ if __name__ == '__main__':
     print("========================================")
 
     try:
-        # 3. Validate Config
         Config.validate()
         print(f"✅ Configuration Loaded. Bot Token: {Config.TELEGRAM_TOKEN[:5]}******")
 
-        # 4. Build Bot Application
         application = ApplicationBuilder().token(Config.TELEGRAM_TOKEN).build()
         
-        # 5. Register Handlers
-        # Command: /start
+        # --- HANDLERS ---
         application.add_handler(CommandHandler("start", start_command))
-        
-        # Messages: Any text that is NOT a command
+        # Add this line for buttons:
+        application.add_handler(CallbackQueryHandler(handle_button_click)) 
+        # Add this line for text:
         application.add_handler(MessageHandler(filters.TEXT & (~filters.COMMAND), handle_text_message))
         
-        print("🟢 Bot is polling... (Go to Telegram and type /start)")
-        print("(Press Ctrl+C in this window to stop)")
-        
-        # 6. Run
+        print("🟢 Bot is polling... (Go to Telegram)")
         application.run_polling()
         
     except Exception as e:
         logger.error(f"Critical Startup Error: {e}")
-        print("\n❌ CRITICAL ERROR: See log above.")
-        input("Press Enter to close...")

@@ -12,7 +12,6 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Select an option below or type your request naturally.\n"
         "_(e.g., 'Check price of iPhone', 'Compare sales today vs last Monday')_"
     )
-    # Example of the inline buttons you requested
     keyboard = [
         [InlineKeyboardButton("📊 Daily Sales", callback_data="btn_sales_today")],
         [InlineKeyboardButton("🏆 Top Debtors", callback_data="btn_top_debtors")]
@@ -25,17 +24,36 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     user_text = update.message.text
     status_msg = await update.message.reply_text("🤔 Thinking...")
 
-    # 1. Ask AI for Intent
-    ai_result = interpret_intent(user_text)
+    # Call the routing logic
+    await route_request(update, context, user_text, status_msg)
+
+async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handle button clicks."""
+    query = update.callback_query
+    await query.answer() # Acknowledge the click so the loading circle stops
+
+    # Map buttons to natural language intents
+    fake_prompt = ""
+    if query.data == "btn_sales_today":
+        fake_prompt = "sales today"
+    elif query.data == "btn_top_debtors":
+        fake_prompt = "top 5 debtors"
+    
+    # Reuse the same logic as text messages
+    status_msg = await query.message.reply_text("🤔 Fetching data...")
+    await route_request(update, context, fake_prompt, status_msg)
+
+async def route_request(update: Update, context, text_prompt, status_msg):
+    """Shared logic for both Text and Buttons"""
+    ai_result = interpret_intent(text_prompt)
     intent = ai_result.get("intent")
     args = ai_result.get("args", {})
 
     response_text = "I'm not sure how to help with that."
 
-    # 2. Route to correct API function
     if intent == "check_stock":
         item_code = args.get("item_code")
-        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=status_msg.message_id, text=f"🔎 Checking stock '{item_code}'...")
+        await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text=f"🔎 Checking stock '{item_code}'...")
         
         item = stock_api.get_stock_item(item_code)
         if item:
@@ -51,7 +69,7 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     elif intent == "check_top_debtors":
         limit = int(args.get("limit", 5))
-        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=status_msg.message_id, text=f"📉 Fetching Top {limit} Debtors...")
+        await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text=f"📉 Fetching Top {limit} Debtors...")
         
         debtors = debtor_api.get_outstanding_debtors()
         top_debtors = debtors[:limit]
@@ -64,21 +82,23 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
             response_text = "✅ No outstanding debtors found."
 
     elif intent == "check_sales":
-        # Simplified for brevity; logic to parse date needed in real app
         date_str = args.get("date_text", "today")
-        # You would add date parsing logic here usually
-        await context.bot.edit_message_text(chat_id=update.effective_chat.id, message_id=status_msg.message_id, text=f"📆 Fetching sales for {date_str}...")
+        await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text=f"📆 Fetching sales for {date_str}...")
         
-        dashboard = sales_api.get_daily_sales_dashboard() # Defaults to today
+        dashboard = sales_api.get_daily_sales_dashboard()
         response_text = (
             f"📅 *Sales Dashboard: {dashboard['date']}*\n"
             f"💵 Revenue: RM {dashboard['revenue']:,.2f}\n"
             f"🧾 Invoices: {dashboard['count']}"
         )
+    
+    # Unknown intent
+    elif intent == "unknown":
+        response_text = "I understood your request, but I don't have a tool for that yet."
 
-    # 3. Send Final Reply
+    # Final Reply
     await context.bot.edit_message_text(
-        chat_id=update.effective_chat.id, 
+        chat_id=status_msg.chat_id, 
         message_id=status_msg.message_id, 
         text=response_text, 
         parse_mode='Markdown'
