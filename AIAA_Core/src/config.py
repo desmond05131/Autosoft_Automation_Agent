@@ -1,8 +1,17 @@
-import os
+﻿import os
+from pathlib import Path
 from dotenv import load_dotenv
 
-# Load .env file
-load_dotenv()
+# --- ROBUST PATH FINDING ---
+# Finds .env file relative to this file (src/config.py -> up one level -> .env)
+BASE_DIR = Path(__file__).resolve().parent.parent
+ENV_PATH = BASE_DIR / '.env'
+
+# Load .env explicitly
+if ENV_PATH.exists():
+    load_dotenv(dotenv_path=ENV_PATH)
+else:
+    print(f"⚠️ WARNING: .env file NOT found at: {ENV_PATH}")
 
 class Config:
     TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
@@ -17,9 +26,13 @@ class Config:
     @classmethod
     def validate(cls):
         """Ensures all necessary variables are loaded."""
+        missing = []
         if not cls.TELEGRAM_TOKEN:
-            raise ValueError("Missing TELEGRAM_TOKEN in .env")
+            missing.append("TELEGRAM_TOKEN")
         if not cls.API_BASE_URL:
-            raise ValueError("Missing API_BASE_URL in .env")
+            missing.append("API_BASE_URL")
         if not cls.API_TOKEN:
-            raise ValueError("Missing API_TOKEN in .env")
+            missing.append("API_TOKEN")
+            
+        if missing:
+            raise ValueError(f"Missing required .env variables: {', '.join(missing)}")
