@@ -1,0 +1,1 @@
+.\AIAA_Core\env\Scripts\Activate.ps1

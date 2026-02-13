@@ -16,7 +16,10 @@ class Config:
 
     @classmethod
     def validate(cls):
+        """Ensures all necessary variables are loaded."""
         if not cls.TELEGRAM_TOKEN:
             raise ValueError("Missing TELEGRAM_TOKEN in .env")
         if not cls.API_BASE_URL:
             raise ValueError("Missing API_BASE_URL in .env")
+        if not cls.API_TOKEN:
+            raise ValueError("Missing API_TOKEN in .env")
