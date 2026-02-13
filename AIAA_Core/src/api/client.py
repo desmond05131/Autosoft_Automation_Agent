@@ -1,35 +1,78 @@
 ﻿import requests
+import logging
 from src.config import Config
+
+logger = logging.getLogger(__name__)
 
 class AutoCountClient:
     def __init__(self):
-        self.base_url = Config.API_BASE_URL.rstrip('/') # Ensure no double slash
-        self.token = Config.API_TOKEN
-        self.headers = {
+        self.base_url = Config.API_BASE_URL.rstrip('/')
+        self.auth_key = None
+        self.session = requests.Session()
+        
+        # Initial Login
+        self.login()
+
+    def login(self):
+        """Exchanges License Key for a Session JWT Token."""
+        endpoint = f"{self.base_url}/api/v3/Login"
+        payload = {
+            "UserID": Config.API_USER,
+            "Password": Config.API_PASSWORD,
+            "Token": Config.API_TOKEN  # This is the License Key
+        }
+        
+        try:
+            print(f"🔐 Attempting Login to {endpoint}...")
+            response = self.session.post(endpoint, json=payload, timeout=10)
+            
+            if response.status_code == 200:
+                data = response.json()
+                if data and len(data) > 0:
+                    # Capture the JWT Token
+                    self.auth_key = data[0].get("JWTToken")
+                    print(f"✅ Login Successful. Token acquired.")
+                    return True
+                else:
+                    print(f"❌ Login Failed: Empty response from server.")
+            else:
+                print(f"❌ Login Failed: Status {response.status_code} - {response.text}")
+                
+        except Exception as e:
+            print(f"❌ Login Exception: {e}")
+        
+        return False
+
+    def get_headers(self):
+        """Constructs headers with the active Session Token."""
+        headers = {
             "Content-Type": "application/json"
         }
-        # Login on startup (optional, but good practice if using token based auth later)
-        # For now we use the static token method from bot_main.py logic
+        if self.auth_key:
+            headers["Authorization"] = f"Bearer {self.auth_key}"
+        return headers
 
     def get(self, endpoint, params=None):
-        """
-        Sends GET request to: {API_BASE_URL}/api/v3/{endpoint}
-        Example: endpoint="Debtor/GetDebtorList" -> http://localhost:8015/api/v3/Debtor/GetDebtorList
-        """
+        """Standard GET request wrapper with Auto-Relogin."""
+        url = f"{self.base_url}/api/v3/{endpoint}"
+        
         try:
-            # Construct the full URL exactly like bot_main.py
-            url = f"{self.base_url}/api/v3/{endpoint}"
+            # First Attempt
+            response = self.session.get(url, headers=self.get_headers(), params=params, timeout=15)
             
-            # Add token to payload/params if needed, or headers
-            # Based on bot_main.py, some endpoints might need the token in the body or params
-            # But usually Freely API uses headers or a static key. 
-            # We will assume standard structure based on your logs.
-            
-            response = requests.get(url, headers=self.headers, params=params, timeout=15)
+            # If 401 Unauthorized, try to login again and retry
+            if response.status_code == 401:
+                print("⚠️ Token expired. Re-logging in...")
+                if self.login():
+                    response = self.session.get(url, headers=self.get_headers(), params=params, timeout=15)
+
             response.raise_for_status()
             return response.json()
+            
         except requests.exceptions.RequestException as e:
-            print(f"❌ API Connection Error: {e}")
+            logger.error(f"API Error ({endpoint}): {e}")
+            # print(f"❌ API Error ({endpoint}): {e}") # Optional: Uncomment for noisy debugging
             return None
 
+# Singleton Instance
 api_client = AutoCountClient()
