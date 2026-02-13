@@ -3,47 +3,29 @@ import json
 import re
 from src.config import Config
 
-# System prompt optimized for DeepSeek to force JSON
 SYSTEM_PROMPT = """
-You are an API Router. You MUST return ONLY a JSON object. 
-Do not output any reasoning, markdown formatting, or explanations.
-Just the raw JSON.
+You are an AutoCount API Assistant.
+Your job is to map user queries to specific TOOLS.
+Return ONLY a valid JSON object. NO conversational text. NO <think> tags.
 
-User Intent Schema:
-{
-  "intent": "check_stock" | "check_debtor_info" | "check_top_debtors" | "check_sales" | "unknown",
-  "args": { ... }
-}
+Available Tools:
+1. "check_stock" -> Args: {"item_code": "extracted_item_name_or_code"}
+2. "check_debtor_info" -> Args: {"name": "extracted_customer_name"}
+3. "list_top_debtors" -> Args: {"limit": 5} (Default to 5 if not specified)
+4. "check_sales" -> Args: {"date_text": "today" or "yesterday" or "YYYY-MM-DD"}
+5. "list_customers" -> Args: {"limit": 10}
+6. "list_stock" -> Args: {"limit": 20}
 
 Examples:
-User: "Check stock for iPhone"
-JSON: {"intent": "check_stock", "args": {"item_code": "iPhone"}}
-
-User: "Top 5 debtors"
-JSON: {"intent": "check_top_debtors", "args": {"limit": 5}}
-
-User: "Sales for today"
-JSON: {"intent": "check_sales", "args": {"date_text": "today"}}
+User: "Check stock for iPhone 15" -> JSON: {"intent": "check_stock", "args": {"item_code": "iPhone 15"}}
+User: "Who owes us money?" -> JSON: {"intent": "list_top_debtors", "args": {"limit": 5}}
+User: "Sales for today" -> JSON: {"intent": "check_sales", "args": {"date_text": "today"}}
+User: "Info on debtor Green" -> JSON: {"intent": "check_debtor_info", "args": {"name": "Green"}}
+User: "Show me customer list" -> JSON: {"intent": "list_customers", "args": {"limit": 10}}
 """
 
-def clean_deepseek_response(text):
-    """Removes <think> tags and finds the first valid JSON object"""
-    # 1. Remove <think>...</think> sections if present
-    text = re.sub(r'<think>.*?</think>', '', text, flags=re.DOTALL)
-    
-    # 2. Try to find JSON inside code blocks ```json ... ```
-    json_block = re.search(r'```json\s*(\{.*?\})\s*```', text, re.DOTALL)
-    if json_block:
-        return json_block.group(1)
-        
-    # 3. If no blocks, try to find the first { ... } structure
-    json_match = re.search(r'\{.*\}', text, re.DOTALL)
-    if json_match:
-        return json_match.group(0)
-        
-    return text
-
 def interpret_intent(user_text):
+    """Parses user natural language into structured JSON intent."""
     try:
         response = ollama.chat(
             model=Config.OLLAMA_MODEL,
@@ -54,14 +36,19 @@ def interpret_intent(user_text):
         )
         
         raw_content = response['message']['content']
-        cleaned_content = clean_deepseek_response(raw_content)
         
-        # Parse JSON
-        return json.loads(cleaned_content)
+        # 1. Clean DeepSeek <think> tags
+        clean_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
         
-    except json.JSONDecodeError:
-        print(f"❌ JSON Parse Error. Raw AI Output: {raw_content}")
-        return {"intent": "unknown", "args": {}}
+        # 2. Extract JSON block if wrapped in markdown
+        json_match = re.search(r'\{.*\}', clean_content, re.DOTALL)
+        if json_match:
+            json_str = json_match.group(0)
+            return json.loads(json_str)
+        else:
+            # Try parsing the whole string
+            return json.loads(clean_content)
+
     except Exception as e:
-        print(f"🧠 AI Critical Error: {e}")
+        print(f"🧠 AI Parsing Error: {e}")
         return {"intent": "unknown", "args": {}}
