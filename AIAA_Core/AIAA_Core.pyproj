@@ -22,19 +22,19 @@
     <EnableUnmanagedDebugging>false</EnableUnmanagedDebugging>
   </PropertyGroup>
   <ItemGroup>
-    <Compile Include="ai\agent.py" />
-    <Compile Include="api\client.py" />
-    <Compile Include="api\debtor.py" />
-    <Compile Include="api\sales.py" />
-    <Compile Include="api\stock.py" />
+    <Compile Include="src\ai\agent.py" />
+    <Compile Include="src\api\client.py" />
+    <Compile Include="src\api\debtor.py" />
+    <Compile Include="src\api\sales.py" />
+    <Compile Include="src\api\stock.py" />
     <Compile Include="src\config.py" />
-    <Compile Include="ai\__init__.py" />
-    <Compile Include="api\__init__.py" />
-    <Compile Include="bot\__init__.py" />
+    <Compile Include="src\ai\__init__.py" />
+    <Compile Include="src\api\__init__.py" />
+    <Compile Include="src\bot\__init__.py" />
     <Compile Include="main.py" />
-    <Compile Include="bot\handlers.py" />
+    <Compile Include="src\bot\handlers.py" />
     <Compile Include="src\__init__.py" />
-    <Compile Include="bot\utils.py" />
+    <Compile Include="src\bot\utils.py" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">
@@ -48,9 +48,9 @@
     </Interpreter>
   </ItemGroup>
   <ItemGroup>
-    <Folder Include="api\" />
-    <Folder Include="bot\" />
-    <Folder Include="ai\" />
+    <Folder Include="src\api\" />
+    <Folder Include="src\bot\" />
+    <Folder Include="src\ai\" />
     <Folder Include="src\" />
   </ItemGroup>
   <ItemGroup>
