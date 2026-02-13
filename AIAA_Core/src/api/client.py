@@ -15,11 +15,12 @@ class AutoCountClient:
 
     def login(self):
         """Exchanges License Key for a Session JWT Token."""
+        # Login is one of the few endpoints that specifically uses /api/v3/
         endpoint = f"{self.base_url}/api/v3/Login"
         payload = {
             "UserID": Config.API_USER,
             "Password": Config.API_PASSWORD,
-            "Token": Config.API_TOKEN  # This is the License Key
+            "Token": Config.API_TOKEN 
         }
         
         try:
@@ -29,7 +30,6 @@ class AutoCountClient:
             if response.status_code == 200:
                 data = response.json()
                 if data and len(data) > 0:
-                    # Capture the JWT Token
                     self.auth_key = data[0].get("JWTToken")
                     print(f"✅ Login Successful. Token acquired.")
                     return True
@@ -49,30 +49,45 @@ class AutoCountClient:
             "Content-Type": "application/json"
         }
         if self.auth_key:
-            headers["Authorization"] = f"Bearer {self.auth_key}"
+            headers["Authorization"] = self.auth_key  # AutoCount uses the raw token, sometimes without 'Bearer'
         return headers
 
-    def get(self, endpoint, params=None):
-        """Standard GET request wrapper with Auto-Relogin."""
-        url = f"{self.base_url}/api/v3/{endpoint}"
+    def _request(self, method, endpoint, **kwargs):
+        """Internal wrapper to handle full URLs and Re-login."""
+        # We assume 'endpoint' starts with 'api/...' 
+        # e.g. "api/Invoice/GetInvoice"
+        url = f"{self.base_url}/{endpoint.lstrip('/')}"
         
         try:
-            # First Attempt
-            response = self.session.get(url, headers=self.get_headers(), params=params, timeout=15)
+            if method.lower() == 'get':
+                response = self.session.get(url, headers=self.get_headers(), timeout=15, **kwargs)
+            else:
+                response = self.session.post(url, headers=self.get_headers(), timeout=15, **kwargs)
             
             # If 401 Unauthorized, try to login again and retry
             if response.status_code == 401:
                 print("⚠️ Token expired. Re-logging in...")
                 if self.login():
-                    response = self.session.get(url, headers=self.get_headers(), params=params, timeout=15)
+                    if method.lower() == 'get':
+                        response = self.session.get(url, headers=self.get_headers(), timeout=15, **kwargs)
+                    else:
+                        response = self.session.post(url, headers=self.get_headers(), timeout=15, **kwargs)
 
-            response.raise_for_status()
+            if response.status_code != 200:
+                logger.error(f"API Error ({endpoint}): {response.status_code} {response.text}")
+                return None
+                
             return response.json()
             
         except requests.exceptions.RequestException as e:
-            logger.error(f"API Error ({endpoint}): {e}")
-            # print(f"❌ API Error ({endpoint}): {e}") # Optional: Uncomment for noisy debugging
+            logger.error(f"API Connection Error ({endpoint}): {e}")
             return None
+
+    def get(self, endpoint, params=None):
+        return self._request('get', endpoint, params=params)
+
+    def post(self, endpoint, json=None):
+        return self._request('post', endpoint, json=json)
 
 # Singleton Instance
 api_client = AutoCountClient()
