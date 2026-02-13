@@ -1,31 +1,38 @@
 ﻿import ollama
 import json
 import re
+from datetime import datetime
 from src.config import Config
 
-SYSTEM_PROMPT = """
-You are an AutoCount API Assistant.
-Your job is to map user queries to specific TOOLS.
-Return ONLY a valid JSON object. NO conversational text. NO <think> tags.
+# Dynamic Date Context
+current_date = datetime.now().strftime("%Y/%m/%d")
+current_day = datetime.now().strftime("%A")
 
-Available Tools:
-1. "check_stock" -> Args: {"item_code": "extracted_item_name_or_code"}
-2. "check_debtor_info" -> Args: {"name": "extracted_customer_name"}
-3. "list_top_debtors" -> Args: {"limit": 5} (Default to 5 if not specified)
-4. "check_sales" -> Args: {"date_text": "today" or "yesterday" or "YYYY-MM-DD"}
-5. "list_customers" -> Args: {"limit": 10}
-6. "list_stock" -> Args: {"limit": 20}
+SYSTEM_PROMPT = f"""
+You are an AutoCount API Assistant. Today is {current_day}, {current_date}.
+Your job is to map User Requests to Functions.
+Return ONLY a valid JSON object.
+
+Available Intents:
+1. "get_sales" -> Args: {{"date": "YYYY/MM/DD"}} (Default to today if unspecified)
+2. "compare_sales" -> Args: {{"date1": "YYYY/MM/DD", "date2": "YYYY/MM/DD"}}
+3. "list_debtors_outstanding" -> Args: {{"limit": 5}}
+4. "list_all_debtors" -> Args: {{}}
+5. "profile_debtor" -> Args: {{"keyword": "name_or_code"}}
+6. "list_all_stock" -> Args: {{}}
+7. "profile_stock" -> Args: {{"keyword": "item_name_or_code"}}
+
+CRITICAL: Convert ALL dates to "YYYY/MM/DD" format.
 
 Examples:
-User: "Check stock for iPhone 15" -> JSON: {"intent": "check_stock", "args": {"item_code": "iPhone 15"}}
-User: "Who owes us money?" -> JSON: {"intent": "list_top_debtors", "args": {"limit": 5}}
-User: "Sales for today" -> JSON: {"intent": "check_sales", "args": {"date_text": "today"}}
-User: "Info on debtor Green" -> JSON: {"intent": "check_debtor_info", "args": {"name": "Green"}}
-User: "Show me customer list" -> JSON: {"intent": "list_customers", "args": {"limit": 10}}
+"Sales today" -> {{"intent": "get_sales", "args": {{"date": "{current_date}"}}}}
+"Compare sales 29 Jan vs 12 Aug" -> {{"intent": "compare_sales", "args": {{"date1": "2026/01/29", "date2": "2026/08/12"}}}}
+"Who owes money" -> {{"intent": "list_debtors_outstanding", "args": {{"limit": 5}}}}
+"Check stock Apple" -> {{"intent": "profile_stock", "args": {{"keyword": "Apple"}}}}
+"Customer list" -> {{"intent": "list_all_debtors", "args": {{}}}}
 """
 
 def interpret_intent(user_text):
-    """Parses user natural language into structured JSON intent."""
     try:
         response = ollama.chat(
             model=Config.OLLAMA_MODEL,
@@ -36,18 +43,14 @@ def interpret_intent(user_text):
         )
         
         raw_content = response['message']['content']
-        
-        # 1. Clean DeepSeek <think> tags
+        # Clean <think> tags
         clean_content = re.sub(r'<think>.*?</think>', '', raw_content, flags=re.DOTALL).strip()
         
-        # 2. Extract JSON block if wrapped in markdown
+        # Extract JSON
         json_match = re.search(r'\{.*\}', clean_content, re.DOTALL)
         if json_match:
-            json_str = json_match.group(0)
-            return json.loads(json_str)
-        else:
-            # Try parsing the whole string
-            return json.loads(clean_content)
+            return json.loads(json_match.group(0))
+        return json.loads(clean_content)
 
     except Exception as e:
         print(f"🧠 AI Parsing Error: {e}")

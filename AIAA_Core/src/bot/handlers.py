@@ -5,21 +5,22 @@ from src.ai.agent import interpret_intent
 import src.api.stock as stock_api
 import src.api.debtor as debtor_api
 import src.api.sales as sales_api
+import re
 
 # --- MENU BUILDER ---
 def get_main_menu():
     keyboard = [
         [
-            InlineKeyboardButton("📊 Sales Today", callback_data="sales_today"),
-            InlineKeyboardButton("📉 Sales Yesterday", callback_data="sales_yesterday")
+            InlineKeyboardButton("📊 Today's Sales", callback_data="btn_sales_today"),
+            InlineKeyboardButton("📉 Yesterday", callback_data="btn_sales_yesterday")
         ],
         [
-            InlineKeyboardButton("🏆 Top 5 Debtors", callback_data="top_debtors"),
-            InlineKeyboardButton("👥 Customer List", callback_data="debtor_list")
+            InlineKeyboardButton("🏆 Top Debtors", callback_data="btn_debtors_top"),
+            InlineKeyboardButton("👥 Customer List", callback_data="btn_debtors_all")
         ],
         [
-            InlineKeyboardButton("📦 Stock List", callback_data="stock_list"),
-            InlineKeyboardButton("💡 Help", callback_data="help_info")
+            InlineKeyboardButton("📦 Stock Catalog", callback_data="btn_stock_list"),
+            InlineKeyboardButton("🔍 Help / Tips", callback_data="btn_help")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -27,186 +28,175 @@ def get_main_menu():
 # --- COMMANDS ---
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     welcome_text = (
-        "🤖 *AutoCount AI Dashboard*\n"
+        "🤖 **AutoCount AI Dashboard**\n"
         "Select an option below or type your request naturally.\n"
-        "_(e.g., 'Check price of iPhone', 'Compare sales today vs last Monday')_"
+        "*(e.g., 'Check price of iPhone', 'Compare sales today vs last Monday')*"
     )
     await update.message.reply_text(welcome_text, reply_markup=get_main_menu(), parse_mode='Markdown')
 
 # --- BUTTON HANDLER ---
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-    await query.answer() # Stop loading animation
-    
+    await query.answer()
     data = query.data
     
-    if data == "sales_today":
-        await execute_sales_report(update, context, "today")
-    elif data == "sales_yesterday":
-        await execute_sales_report(update, context, "yesterday")
-    elif data == "top_debtors":
-        await execute_top_debtors(update, context)
-    elif data == "debtor_list":
-        await execute_customer_list(update, context)
-    elif data == "stock_list":
-        await execute_stock_list(update, context)
-    elif data == "help_info":
-        help_text = (
-            "💡 *How to use AutoCount AI*\n\n"
-            "1. *Use the Buttons*: Click the menu options for quick reports.\n"
-            "2. *Chat Naturally*:\n"
+    if data == 'btn_sales_today':
+        target_date = datetime.now().strftime("%Y/%m/%d")
+        s = sales_api.get_sales_dashboard(target_date)
+        if s:
+            icon = "📈" if s['sales'] >= s['prev_sales'] else "📉"
+            msg = (
+                f"📊 **Sales Dashboard: Today**\n"
+                f"💵 Revenue: RM {s['sales']:,.2f}\n"
+                f"🧾 Invoices: {s['count']}\n"
+                f"({icon} vs Prev Day: RM {s['prev_sales']:,.2f})"
+            )
+            await query.message.reply_text(msg, parse_mode='Markdown')
+        else:
+            await query.message.reply_text("❌ No data for today.")
+
+    elif data == 'btn_sales_yesterday':
+        target_date = (datetime.now() - timedelta(days=1)).strftime("%Y/%m/%d")
+        s = sales_api.get_sales_dashboard(target_date)
+        if s:
+            msg = (f"📉 **Sales: Yesterday ({s['date']})**\n"
+                   f"💵 Revenue: RM {s['sales']:,.2f}\n"
+                   f"🧾 Invoices: {s['count']}")
+            await query.message.reply_text(msg, parse_mode='Markdown')
+
+    elif data == 'btn_debtors_top':
+        data = debtor_api.get_debtor_outstanding(5)
+        msg = f"🏆 **Top 5 Debtors**\n" + "\n".join([f"• {d['CompanyName']}: RM {d['show_bal']:,.2f}" for d in data]) if data else "✅ No outstanding debt."
+        await query.message.reply_text(msg, parse_mode='Markdown')
+
+    elif data == 'btn_debtors_all':
+        data = debtor_api.get_all_debtors(20)
+        msg = "👥 **Customer Directory**\n" + "\n".join([f"• `{d['AccNo']}` {d['CompanyName']}" for d in data]) if data else "❌ No customers found."
+        await query.message.reply_text(msg, parse_mode='Markdown')
+
+    elif data == 'btn_stock_list':
+        data = stock_api.get_stock_list(20)
+        msg = "📦 **Stock Catalog**\n" + "\n".join([f"• `{i['ItemCode']}` {i['Description']}: **{i['show_qty']}**" for i in data]) if data else "❌ No items found."
+        await query.message.reply_text(msg, parse_mode='Markdown')
+        
+    elif data == 'btn_help':
+        msg = (
+            "💡 **How to use AutoCount AI**\n\n"
+            "**1. Use the Buttons:** Click the menu options for quick reports.\n"
+            "**2. Chat Naturally:**\n"
             "• 'Check stock for iPhone'\n"
             "• 'Who represents ABC Company?'\n"
             "• 'Sales for 25th Dec'\n"
-            "• 'List top 5 debtors'"
+            "• 'Compare sales today vs last week'"
         )
-        await query.message.reply_text(help_text, parse_mode='Markdown')
+        await query.message.reply_text(msg, parse_mode='Markdown')
 
 # --- TEXT HANDLER ---
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
+    
+    # AI Processing
     status_msg = await update.message.reply_text("🤔 Thinking...")
-
-    # 1. AI Logic
     intent_data = interpret_intent(user_text)
     intent = intent_data.get("intent")
     args = intent_data.get("args", {})
+    
+    print(f"🧠 Intent: {intent} | Args: {args}")
+    
+    await context.bot.delete_message(chat_id=status_msg.chat_id, message_id=status_msg.message_id)
 
-    print(f"🧠 Detected Intent: {intent} | Args: {args}")
-
-    # 2. Routing
-    try:
-        if intent == "check_stock":
-            item_code = args.get("item_code")
-            # Logic for single item check
-            item = stock_api.get_stock_item(item_code)
-            if item:
-                msg = (
-                    f"📦 *{item.get('Description', item_code)}*\n"
-                    f"🔢 Code: `{item.get('ItemCode')}`\n"
-                    f"📊 Stock: {item.get('BalQty', 0)} {item.get('UOM', 'UNIT')}\n"
-                    f"━━━━━━━━━━━━━━━━━━\n"
-                    f"💵 Price: RM {item.get('Price', 0.00):.2f}\n"
-                    f"🛠 Cost: RM {item.get('Cost', 0.00):.2f}\n"
-                    f"📂 Group: {item.get('ItemGroup', 'N/A')} | Type: {item.get('ItemType', 'N/A')}"
-                )
-                await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text=msg, parse_mode='Markdown')
-            else:
-                await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text=f"❌ Item '{item_code}' not found.")
-
-        elif intent == "check_debtor_info":
-            name = args.get("name")
-            debtor = debtor_api.find_debtor(name)
-            if debtor:
-                msg = (
-                    f"👤 *{debtor.get('CompanyName')}*\n"
-                    f"🆔 `{debtor.get('DebtorCode')}`\n"
-                    f"💰 Bal: RM {float(debtor.get('Balance', 0)):,.2f}\n"
-                    f"📍 {debtor.get('Address', 'N/A')}\n"
-                    f"📞 {debtor.get('Phone', 'N/A')} | 📠 {debtor.get('Fax', 'N/A')}\n"
-                    f"💳 Limit: RM {float(debtor.get('CreditLimit', 0)):,.2f} | 📅 Term: {debtor.get('CreditTerm', 'N/A')}"
-                )
-                await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text=msg, parse_mode='Markdown')
-            else:
-                await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text=f"❌ Debtor '{name}' not found.")
-
-        elif intent == "list_top_debtors":
-            # Delete thinking message and send fresh report
-            await context.bot.delete_message(chat_id=status_msg.chat_id, message_id=status_msg.message_id)
-            await execute_top_debtors(update, context)
-
-        elif intent == "check_sales":
-             # Delete thinking message and send fresh report
-            await context.bot.delete_message(chat_id=status_msg.chat_id, message_id=status_msg.message_id)
-            date_text = args.get("date_text", "today")
-            await execute_sales_report(update, context, date_text)
-
-        elif intent == "list_customers":
-             # Delete thinking message and send fresh report
-            await context.bot.delete_message(chat_id=status_msg.chat_id, message_id=status_msg.message_id)
-            await execute_customer_list(update, context)
-            
-        elif intent == "list_stock":
-             # Delete thinking message and send fresh report
-            await context.bot.delete_message(chat_id=status_msg.chat_id, message_id=status_msg.message_id)
-            await execute_stock_list(update, context)
-
+    # --- SALES HANDLERS ---
+    if intent == "compare_sales":
+        date1 = args.get("date1")
+        date2 = args.get("date2")
+        
+        await update.message.reply_text(f"📊 Comparing {date1} vs {date2}...")
+        s1 = sales_api.get_sales_dashboard(date1)
+        s2 = sales_api.get_sales_dashboard(date2)
+        
+        if s1 and s2:
+            diff = s1['sales'] - s2['sales']
+            icon = "🟢" if diff >= 0 else "🔴"
+            msg = (
+                f"⚔️ **Sales Comparison**\n"
+                f"📅 **{s1['date']}**: RM {s1['sales']:,.2f}\n"
+                f"📅 **{s2['date']}**: RM {s2['sales']:,.2f}\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"Difference: {icon} RM {abs(diff):,.2f}"
+            )
+            await update.message.reply_text(msg, parse_mode='Markdown')
         else:
-             await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text="I'm not sure how to help with that. Try checking stock or sales.")
-             
-    except Exception as e:
-        print(f"Handler Error: {e}")
-        await context.bot.edit_message_text(chat_id=status_msg.chat_id, message_id=status_msg.message_id, text="⚠️ An error occurred while processing your request.")
+            await update.message.reply_text("❌ Could not fetch data for one or both dates.")
 
-# --- EXECUTION FUNCTIONS (Shared by Buttons & AI) ---
+    elif intent == "get_sales":
+        target_date = args.get("date")
+        await update.message.reply_text(f"📆 Fetching sales for {target_date}...")
+        
+        s = sales_api.get_sales_dashboard(target_date)
+        if s:
+            icon = "📈" if s['sales'] >= s['prev_sales'] else "📉"
+            await update.message.reply_text(
+                f"📅 **Sales: {s['date']}**\n"
+                f"💵 Revenue: RM {s['sales']:,.2f}\n"
+                f"🧾 Invoices: {s['count']}\n"
+                f"({icon} vs Prev Day: RM {s['prev_sales']:,.2f})", 
+                parse_mode='Markdown'
+            )
+        else:
+            await update.message.reply_text("❌ No sales data found for this date.")
 
-async def execute_sales_report(update, context, date_keyword):
-    # Determine date
-    target_date = datetime.now()
-    title = "Today"
-    if "yesterday" in date_keyword.lower():
-        target_date = datetime.now() - timedelta(days=1)
-        title = f"Yesterday ({target_date.strftime('%Y/%m/%d')})"
-    
-    date_str = target_date.strftime("%Y-%m-%d")
-    
-    # Message fallback for buttons vs text
-    chat_id = update.effective_chat.id
-    if update.callback_query:
-        await update.callback_query.message.reply_text(f"📆 Fetching sales for {title}...")
+    # --- DEBTOR HANDLERS ---
+    elif intent == "list_debtors_outstanding":
+        limit = args.get("limit", 5)
+        await update.message.reply_text(f"📉 Fetching Top {limit} Debtors...")
+        data = debtor_api.get_debtor_outstanding(limit)
+        msg = f"🏆 **Top {len(data)} Debtors**\n" + "\n".join([f"• {d['CompanyName']}: RM {d['show_bal']:,.2f}" for d in data]) if data else "✅ No debt."
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
+    elif intent == "list_all_debtors":
+        await update.message.reply_text("📂 Fetching Customer Directory...")
+        data = debtor_api.get_all_debtors(20)
+        msg = "📂 **Customer List**\n" + "\n".join([f"• `{d['AccNo']}` {d['CompanyName']}" for d in data]) if data else "❌ No customers."
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
+    elif intent == "profile_debtor":
+        kw = args.get("keyword")
+        await update.message.reply_text(f"🔍 Searching customer '{kw}'...")
+        d = debtor_api.get_debtor_profile(kw)
+        if d:
+            addr = ", ".join(filter(None, [d.get(f'Address{i}') for i in range(1,5)] + [d.get('PostCode'), d.get('State')])) or "N/A"
+            msg = (f"👤 **{d['CompanyName']}**\n🆔 `{d['AccNo']}`\n💰 Bal: RM {d['show_bal']:,.2f}\n"
+                   f"📍 {addr}\n📞 {d.get('Phone1', 'N/A')} | 📠 {d.get('Fax1', 'N/A')}\n"
+                   f"💳 Limit: RM {d.get('CreditLimit',0):,.2f} | 📅 Term: {d.get('DisplayTerm','N/A')}")
+            await update.message.reply_text(msg, parse_mode='Markdown')
+        else:
+            await update.message.reply_text("❌ Customer not found.")
+
+    # --- STOCK HANDLERS ---
+    elif intent == "list_all_stock":
+        await update.message.reply_text("📦 Fetching Item Catalog...")
+        data = stock_api.get_stock_list(20)
+        msg = "📦 **Item Catalog**\n" + "\n".join([f"• `{i['ItemCode']}` {i['Description']}: **{i['show_qty']}**" for i in data]) if data else "❌ No items."
+        await update.message.reply_text(msg, parse_mode='Markdown')
+
+    elif intent == "profile_stock":
+        kw = args.get("keyword")
+        await update.message.reply_text(f"🔎 Checking stock '{kw}'...")
+        i = stock_api.get_stock_profile(kw)
+        if i:
+            msg = (
+                f"📦 **{i['Description']}**\n"
+                f"🔢 Code: `{i['ItemCode']}`\n"
+                f"📊 **Stock: {i['show_qty']} {i.get('UOM','UNIT')}**\n"
+                f"━━━━━━━━━━━━━━━━━━\n"
+                f"💵 Price: RM {i.get('RefPrice', i.get('Price', 0.0)):,.2f}\n"
+                f"🛠 Cost: RM {i.get('StdCost', 0.0):,.2f}\n"
+                f"📂 Group: {i.get('ItemGroup', 'N/A')} | Type: {i.get('ItemType', 'N/A')}\n"
+            )
+            await update.message.reply_text(msg, parse_mode='Markdown')
+        else:
+            await update.message.reply_text("❌ Item not found.")
+
     else:
-        # If via text, the "Thinking" message handles the wait
-        pass 
-
-    data = sales_api.get_daily_sales(date_str)
-    
-    msg = (
-        f"📅 *Sales: {title}*\n"
-        f"💵 Revenue: RM {data['revenue']:,.2f}\n"
-        f"🧾 Invoices: {data['count']}\n"
-        f"(📈 vs Prev Day: RM {data['diff']:,.2f})"
-    )
-    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
-
-async def execute_top_debtors(update, context):
-    chat_id = update.effective_chat.id
-    await context.bot.send_message(chat_id=chat_id, text="📉 Fetching Top 5 Debtors...")
-    
-    debtors = debtor_api.get_top_debtors(5)
-    
-    if not debtors:
-        await context.bot.send_message(chat_id=chat_id, text="✅ No outstanding debtors found.")
-        return
-
-    msg = "🏆 *Top 5 Debtors*\n"
-    for d in debtors:
-        msg += f"• {d['CompanyName']}: RM {d['Balance']:,.2f}\n"
-    
-    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
-
-async def execute_customer_list(update, context):
-    chat_id = update.effective_chat.id
-    await context.bot.send_message(chat_id=chat_id, text="👥 Fetching Customer List...")
-    
-    customers = debtor_api.get_all_debtors(limit=20)
-    msg = "👥 *Customer Directory*\n"
-    for c in customers:
-        msg += f"• `{c['DebtorCode']}` {c['CompanyName']}\n"
-        
-    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
-
-async def execute_stock_list(update, context):
-    chat_id = update.effective_chat.id
-    await context.bot.send_message(chat_id=chat_id, text="📦 Fetching Stock List...")
-    
-    # Assuming we fetch a small list for display
-    items = stock_api.get_all_stock(limit=20)
-    
-    msg = "📦 *Stock Catalog*\n"
-    for i in items:
-        # Robustly handle missing keys
-        desc = i.get('Description', i.get('ItemCode', 'Unknown'))
-        qty = i.get('BalQty', 0.0)
-        msg += f"• {desc} : {qty}\n"
-        
-    await context.bot.send_message(chat_id=chat_id, text=msg, parse_mode='Markdown')
+        # Fallback to Menu
+        await start_command(update, context)

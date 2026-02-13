@@ -1,42 +1,56 @@
+from datetime import datetime, timedelta
 from src.api.client import api_client
 
-def get_daily_sales(date_str):
-    # Endpoint: api/Invoice/GetInvoice (POST)
-    # Payload requires DateFrom and DateTo
-    payload = {
-        "DateFrom": date_str, # Format: YYYY/MM/DD
-        "DateTo": date_str
-    }
+def get_sales_dashboard(specific_date_str=None):
+    """
+    Returns sales stats for a specific date AND the previous day (for comparison).
+    Matches bot_main.py logic.
+    """
+    url = "api/Invoice/GetInvoice"
     
-    # AutoCount usually returns data inside "ResultTable"
-    response = api_client.post("api/Invoice/GetInvoice", json=payload)
-    
-    invoices = []
-    if response and isinstance(response, dict):
-        invoices = response.get("ResultTable", [])
-    
-    if not invoices:
-        return {"revenue": 0.0, "count": 0, "diff": 0.0}
+    # Date Logic
+    if specific_date_str:
+        try:
+            target_dt = datetime.strptime(specific_date_str, "%Y/%m/%d")
+        except:
+            # Try ISO format if passed from AI agent
+            try:
+                target_dt = datetime.strptime(specific_date_str, "%Y-%m-%d")
+            except:
+                return None
+    else:
+        target_dt = datetime.now()
 
-    # Calculate Total
-    # AutoCount fields: FinalTotal or NetTotal
-    total_revenue = 0.0
-    count = 0
+    # Format for API: YYYY/MM/DD
+    target_date = target_dt.strftime("%Y/%m/%d")
+    prev_date = (target_dt - timedelta(days=1)).strftime("%Y/%m/%d")
     
-    for inv in invoices:
-        if inv.get("Cancelled") == "T": 
-            continue
+    # Payload requests range from PrevDate to TargetDate
+    payload = {"DateFrom": prev_date, "DateTo": target_date}
+    
+    try:
+        response = api_client.post(url, json_payload=payload)
+        data = []
+        if response and isinstance(response, dict):
+            data = response.get("ResultTable", [])
+            
+        stats = {"sales": 0.0, "prev_sales": 0.0, "count": 0, "date": target_date}
         
-        # Ensure we only sum sales for the specific date 
-        # (API might return range, though here start=end)
-        doc_date = inv.get("DocDate", "")[:10].replace("-", "/")
-        if doc_date == date_str:
+        for inv in data:
+            if inv.get("Cancelled") == "T": continue
+            
+            # Clean date string "2026-01-29T00..." -> "2026/01/29"
+            doc_date_raw = inv.get("DocDate", "")[:10].replace("-", "/")
+            
             amount = float(inv.get("FinalTotal", inv.get("NetTotal", 0.0)))
-            total_revenue += amount
-            count += 1
-    
-    return {
-        "revenue": total_revenue,
-        "count": count,
-        "diff": 0.0 
-    }
+            
+            if doc_date_raw == target_date:
+                stats["sales"] += amount
+                stats["count"] += 1
+            elif doc_date_raw == prev_date:
+                stats["prev_sales"] += amount
+                
+        return stats
+    except Exception as e:
+        print(f"Sales API Error: {e}")
+        return None

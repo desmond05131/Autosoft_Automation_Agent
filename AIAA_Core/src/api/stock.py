@@ -1,16 +1,7 @@
 from src.api.client import api_client
 
-def get_all_stock_raw():
-    # Endpoint: api/V2/Item/GetItem (POST)
-    payload = {"ItemCode": [], "IncludeBatchBal": True}
-    response = api_client.post("api/V2/Item/GetItem", json=payload)
-    
-    if response and isinstance(response, dict):
-        return response.get("ResultTable", [])
-    return []
-
 def _get_qty(item):
-    """Helper to calculate total quantity from ItemDTL or main fields."""
+    """Calculates total quantity looking at BalQty, Qty, and ItemDTL."""
     total_qty = 0.0
     if 'BalQty' in item: total_qty = float(item['BalQty'])
     elif 'Qty' in item: total_qty = float(item['Qty'])
@@ -20,30 +11,34 @@ def _get_qty(item):
             total_qty += float(dtl.get("BalQty", dtl.get("Qty", 0)))
     return total_qty
 
-def get_stock_item(item_code):
-    # Fetch all (or filter list locally) because API V2 search by specific code 
-    # might require exact match in payload ["CODE"]
+def get_stock_raw():
+    """Fetches all items with batch balance."""
+    # Matches bot_main.py: /api/V2/Item/GetItem
+    payload = {"ItemCode": [], "IncludeBatchBal": True}
+    response = api_client.post("api/V2/Item/GetItem", json_payload=payload)
     
-    # Strategy: Fetch list and search locally (matches bot_main.py logic)
-    all_stock = get_all_stock_raw()
-    
-    item_code = item_code.lower()
-    for item in all_stock:
-        code = item.get('ItemCode', '').lower()
-        desc = item.get('Description', '').lower()
-        
-        if item_code in code or item_code in desc:
-            item['calculated_qty'] = _get_qty(item)
-            return item
-            
-    return None
+    if response and isinstance(response, dict):
+        return response.get("ResultTable", [])
+    return []
 
-def get_all_stock(limit=20):
-    data = get_all_stock_raw()
+def get_stock_list(limit=20):
+    """Returns list of items with show_qty."""
+    data = get_stock_raw()
     if not data: return []
     
-    # Calculate qty for display
     for i in data:
-        i['calculated_qty'] = _get_qty(i)
+        i['show_qty'] = _get_qty(i)
         
     return data[:limit]
+
+def get_stock_profile(keyword):
+    """Finds exact item."""
+    data = get_stock_raw()
+    if not data: return None
+    
+    keyword = keyword.lower()
+    for item in data:
+        if keyword in item.get("ItemCode", "").lower() or keyword in item.get("Description", "").lower():
+            item['show_qty'] = _get_qty(item)
+            return item
+    return None

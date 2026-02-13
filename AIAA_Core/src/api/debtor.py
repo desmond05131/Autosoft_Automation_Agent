@@ -1,44 +1,51 @@
 from src.api.client import api_client
 
-def get_debtor_list_raw():
-    """Fetch raw list from AutoCount using the correct endpoint."""
-    # Endpoint: api/Debtor/GetDebtor/ (POST)
-    # Payload: {"AccNo": []} means "fetch all"
-    return api_client.post("api/Debtor/GetDebtor/", json={"AccNo": []})
-
 def _get_balance(item):
-    """Helper to extract balance safely."""
+    """Calculates balance checking multiple potential keys."""
     for key in ['Balance', 'Outstanding', 'CurBalance', 'NetTotal']:
         if key in item and item[key] is not None: 
             return float(item[key])
     return 0.0
 
-def get_top_debtors(limit=5):
+def get_debtor_list_raw():
+    """Fetch all debtors."""
+    # Matches bot_main.py: /api/Debtor/GetDebtor/ with AccNo=[]
+    return api_client.post("api/Debtor/GetDebtor/", json_payload={"AccNo": []})
+
+def get_debtor_outstanding(limit=5):
+    """Returns top N debtors with positive balance."""
+    data = get_debtor_list_raw()
+    if not data: return []
+
+    # Calculate show_bal for each
+    for d in data:
+        d['show_bal'] = _get_balance(d)
+    
+    # Filter > 0
+    debtors = [d for d in data if d['show_bal'] > 0]
+    
+    # Sort Descending
+    sorted_debtors = sorted(debtors, key=lambda x: x['show_bal'], reverse=True)
+    return sorted_debtors[:limit]
+
+def get_all_debtors(limit=20):
+    """Returns list of debtors."""
     data = get_debtor_list_raw()
     if not data: return []
     
-    # Inject balance helper
     for d in data:
-        d['calculated_balance'] = _get_balance(d)
+        d['show_bal'] = _get_balance(d)
         
-    # Filter > 0 and Sort by Balance desc
-    debtors = [d for d in data if d['calculated_balance'] > 0]
-    sorted_data = sorted(debtors, key=lambda x: x['calculated_balance'], reverse=True)
-    return sorted_data[:limit]
-
-def get_all_debtors(limit=20):
-    data = get_debtor_list_raw()
-    if not data: return []
     return data[:limit]
 
-def find_debtor(keyword):
+def get_debtor_profile(keyword):
+    """Finds a specific debtor by Name or AccNo."""
     data = get_debtor_list_raw()
     if not data: return None
     
     keyword = keyword.lower()
-    for d in data:
-        # Search in CompanyName or AccNo
-        if keyword in d.get('CompanyName', '').lower() or keyword in d.get('AccNo', '').lower():
-            d['calculated_balance'] = _get_balance(d)
-            return d
+    for item in data:
+        if keyword in item.get("CompanyName", "").lower() or keyword in item.get("AccNo", "").lower():
+            item['show_bal'] = _get_balance(item)
+            return item
     return None
