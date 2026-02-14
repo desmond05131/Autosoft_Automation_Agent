@@ -1,15 +1,22 @@
 ﻿from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import ContextTypes
+from telegram.ext import ContextTypes, ConversationHandler
 from datetime import datetime, timedelta
 from src.ai.agent import interpret_intent
 import src.api.stock as stock_api
 import src.api.debtor as debtor_api
 import src.api.sales as sales_api
+import src.api.invoice as invoice_api
 import re
+
+# --- CONVERSATION STATES ---
+INVOICE_DEBTOR, INVOICE_ITEM, INVOICE_QTY, INVOICE_CONFIRM = range(4)
 
 # --- MENU BUILDER ---
 def get_main_menu():
     keyboard = [
+        [
+            InlineKeyboardButton("➕ Create Invoice", callback_data="btn_create_invoice")
+        ],
         [
             InlineKeyboardButton("📊 Today's Sales", callback_data="btn_sales_today"),
             InlineKeyboardButton("📉 Yesterday", callback_data="btn_sales_yesterday")
@@ -34,11 +41,154 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text, reply_markup=get_main_menu(), parse_mode='Markdown')
 
-# --- BUTTON HANDLER ---
-async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# --- INVOICE FLOW HANDLERS ---
+
+async def start_invoice_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 1: User clicks Create Invoice -> Ask for Debtor Code"""
     query = update.callback_query
     await query.answer()
+    
+    await query.message.reply_text(
+        "🧾 **New Invoice Wizard**\n\n"
+        "Step 1/3: Please enter the **Debtor Code**.\n"
+        "*(e.g., 300-A001 or just type a name to search)*"
+    )
+    return INVOICE_DEBTOR
+
+async def receive_debtor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 2: Save Debtor -> Ask for Item"""
+    user_input = update.message.text.strip()
+    
+    # Optional: Logic to search debtor if they typed a name instead of code
+    # For now, we assume they typed a code or we verify it roughly
+    context.user_data['inv_debtor'] = user_input
+    
+    await update.message.reply_text(
+        f"✅ Debtor set to: `{user_input}`\n\n"
+        "Step 2/3: Please enter the **Item Code**."
+    )
+    return INVOICE_ITEM
+
+async def receive_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 3: Save Item & Fetch Price -> Ask for Quantity"""
+    item_code = update.message.text.strip()
+    
+    # Verify item and fetch default price
+    await update.message.reply_text("🔍 Checking item details...")
+    item_details = stock_api.get_stock_profile(item_code)
+    
+    if item_details:
+        price = item_details.get("Price", 0.0)
+        desc = item_details.get("Description", item_code)
+        
+        context.user_data['inv_item'] = item_details.get("ItemCode", item_code)
+        context.user_data['inv_price'] = price
+        context.user_data['inv_desc'] = desc
+        
+        await update.message.reply_text(
+            f"✅ Item found: **{desc}**\n"
+            f"💵 Unit Price: RM {price:,.2f}\n\n"
+            "Step 3/3: How many **Quantity**?"
+        )
+        return INVOICE_QTY
+    else:
+        # Fallback if item not found, ask user to re-enter or proceed with raw code
+        await update.message.reply_text(
+            f"⚠️ Item `{item_code}` not found in catalog, but we can try to use it.\n"
+            "Please enter the **Quantity** to proceed (Price will be 0)."
+        )
+        context.user_data['inv_item'] = item_code
+        context.user_data['inv_price'] = 0.0
+        context.user_data['inv_desc'] = "Unknown Item"
+        return INVOICE_QTY
+
+async def receive_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 4: Calc Totals -> Show Confirm Button"""
+    qty_text = update.message.text.strip()
+    
+    try:
+        qty = float(qty_text)
+        context.user_data['inv_qty'] = qty
+    except ValueError:
+        await update.message.reply_text("❌ Invalid number. Please enter a numeric Quantity (e.g., 10).")
+        return INVOICE_QTY # Stay in same state
+
+    # Prepare Confirmation Summary
+    debtor = context.user_data['inv_debtor']
+    item = context.user_data['inv_item']
+    desc = context.user_data['inv_desc']
+    price = context.user_data['inv_price']
+    total = qty * price
+    
+    confirm_kb = [
+        [
+            InlineKeyboardButton("✅ Confirm Invoice", callback_data="inv_confirm_yes"),
+            InlineKeyboardButton("❌ Cancel", callback_data="inv_confirm_no")
+        ]
+    ]
+    
+    msg = (
+        "📝 **Confirm Invoice Details**\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"👤 Customer: `{debtor}`\n"
+        f"📦 Item: {desc} (`{item}`)\n"
+        f"🔢 Qty: {qty} x RM {price:,.2f}\n"
+        f"💵 **Total: RM {total:,.2f}**\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Create this invoice now?"
+    )
+    
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(confirm_kb), parse_mode='Markdown')
+    return INVOICE_CONFIRM
+
+async def complete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Final Step: Call API or Cancel"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "inv_confirm_yes":
+        await query.message.edit_text("⏳ Sending data to AutoCount...")
+        
+        # Call API
+        result = invoice_api.create_invoice(
+            debtor_code=context.user_data['inv_debtor'],
+            item_code=context.user_data['inv_item'],
+            qty=context.user_data['inv_qty'],
+            unit_price=context.user_data['inv_price']
+        )
+        
+        if result['success']:
+            await query.message.edit_text(f"✅ **Success!**\nInvoice created: `{result['doc_no']}`", parse_mode='Markdown')
+        else:
+            await query.message.edit_text(f"❌ **Failed**\nError: {result.get('error')}", parse_mode='Markdown')
+            
+    else:
+        await query.message.edit_text("❌ Invoice creation cancelled.")
+        
+    return ConversationHandler.END
+
+async def cancel_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Abort conversation"""
+    await update.message.reply_text("❌ Operation cancelled.", reply_markup=get_main_menu())
+    return ConversationHandler.END
+
+
+# --- STANDARD BUTTON HANDLER ---
+async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Handles main menu buttons (READ-ONLY functions)"""
+    query = update.callback_query
+    # Note: We DON'T answer() here immediately if we pass through logic, 
+    # but for simple buttons we do.
+    
     data = query.data
+    
+    # If it's the Create Invoice button, it shouldn't be handled here directly 
+    # if using ConversationHandler entry_points. 
+    # However, sometimes it's cleaner to handle mixed logic.
+    # For this setup, ConversationHandler filters will catch 'btn_create_invoice' 
+    # BEFORE this function if configured correctly in main.py.
+    
+    await query.answer()
     
     if data == 'btn_sales_today':
         target_date = datetime.now().strftime("%Y/%m/%d")
@@ -82,12 +232,11 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data == 'btn_help':
         msg = (
             "💡 **How to use AutoCount AI**\n\n"
-            "**1. Use the Buttons:** Click the menu options for quick reports.\n"
-            "**2. Chat Naturally:**\n"
+            "**1. Create Invoice:** Click the button and follow the steps.\n"
+            "**2. Check Data:** Click reports for quick views.\n"
+            "**3. Chat Naturally:**\n"
             "• 'Check stock for iPhone'\n"
-            "• 'Who represents ABC Company?'\n"
             "• 'Sales for 25th Dec'\n"
-            "• 'Compare sales today vs last week'"
         )
         await query.message.reply_text(msg, parse_mode='Markdown')
 

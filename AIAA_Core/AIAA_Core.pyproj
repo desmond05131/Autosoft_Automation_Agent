@@ -25,6 +25,7 @@
     <Compile Include="src\ai\agent.py" />
     <Compile Include="src\api\client.py" />
     <Compile Include="src\api\debtor.py" />
+    <Compile Include="src\api\invoice.py" />
     <Compile Include="src\api\sales.py" />
     <Compile Include="src\api\stock.py" />
     <Compile Include="src\config.py" />
