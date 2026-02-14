@@ -6,7 +6,6 @@ import src.api.stock as stock_api
 import src.api.debtor as debtor_api
 import src.api.sales as sales_api
 import src.api.invoice as invoice_api
-import re
 
 # --- CONVERSATION STATES ---
 INVOICE_DEBTOR, INVOICE_ITEM, INVOICE_QTY, INVOICE_CONFIRM = range(4)
@@ -41,26 +40,23 @@ async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(welcome_text, reply_markup=get_main_menu(), parse_mode='Markdown')
 
-# --- INVOICE FLOW HANDLERS ---
+# --- INVOICE WIZARD HANDLERS ---
 
 async def start_invoice_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step 1: User clicks Create Invoice -> Ask for Debtor Code"""
+    """Step 1: Init Wizard -> Ask Debtor"""
     query = update.callback_query
     await query.answer()
     
     await query.message.reply_text(
         "🧾 **New Invoice Wizard**\n\n"
         "Step 1/3: Please enter the **Debtor Code**.\n"
-        "*(e.g., 300-A001 or just type a name to search)*"
+        "*(e.g., 300-A001)*"
     )
     return INVOICE_DEBTOR
 
 async def receive_debtor(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step 2: Save Debtor -> Ask for Item"""
+    """Step 2: Save Debtor -> Ask Item"""
     user_input = update.message.text.strip()
-    
-    # Optional: Logic to search debtor if they typed a name instead of code
-    # For now, we assume they typed a code or we verify it roughly
     context.user_data['inv_debtor'] = user_input
     
     await update.message.reply_text(
@@ -70,97 +66,100 @@ async def receive_debtor(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return INVOICE_ITEM
 
 async def receive_item(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step 3: Save Item & Fetch Price -> Ask for Quantity"""
+    """Step 3: Save Item & Price -> Ask Qty"""
     item_code = update.message.text.strip()
-    
-    # Verify item and fetch default price
     await update.message.reply_text("🔍 Checking item details...")
-    item_details = stock_api.get_stock_profile(item_code)
     
-    if item_details:
-        price = item_details.get("Price", 0.0)
-        desc = item_details.get("Description", item_code)
+    # Fetch profile to get Description and Price
+    item_profile = stock_api.get_stock_profile(item_code)
+    
+    if item_profile:
+        # Use DB data
+        desc = item_profile.get("Description") or item_profile.get("Desc2") or item_code
+        price = float(item_profile.get("Price", 0.0))
+        # Sometimes API returns price in different fields, verify if 0
+        if price == 0.0 and "RecPrice" in item_profile:
+             price = float(item_profile["RecPrice"])
         
-        context.user_data['inv_item'] = item_details.get("ItemCode", item_code)
-        context.user_data['inv_price'] = price
+        context.user_data['inv_item'] = item_profile.get("ItemCode", item_code)
         context.user_data['inv_desc'] = desc
+        context.user_data['inv_price'] = price
         
         await update.message.reply_text(
             f"✅ Item found: **{desc}**\n"
-            f"💵 Unit Price: RM {price:,.2f}\n\n"
+            f"💵 Price: RM {price:,.2f}\n\n"
             "Step 3/3: How many **Quantity**?"
         )
-        return INVOICE_QTY
     else:
-        # Fallback if item not found, ask user to re-enter or proceed with raw code
-        await update.message.reply_text(
-            f"⚠️ Item `{item_code}` not found in catalog, but we can try to use it.\n"
-            "Please enter the **Quantity** to proceed (Price will be 0)."
-        )
+        # Fallback if item not found (allow manual entry)
         context.user_data['inv_item'] = item_code
-        context.user_data['inv_price'] = 0.0
         context.user_data['inv_desc'] = "Unknown Item"
-        return INVOICE_QTY
+        context.user_data['inv_price'] = 0.0
+        
+        await update.message.reply_text(
+            f"⚠️ Item `{item_code}` not found in catalog, but we will proceed.\n"
+            "(Price set to RM 0.00)\n\n"
+            "Step 3/3: How many **Quantity**?"
+        )
+    
+    return INVOICE_QTY
 
 async def receive_qty(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Step 4: Calc Totals -> Show Confirm Button"""
+    """Step 4: Calc Total -> Ask Confirmation"""
     qty_text = update.message.text.strip()
-    
     try:
         qty = float(qty_text)
         context.user_data['inv_qty'] = qty
     except ValueError:
-        await update.message.reply_text("❌ Invalid number. Please enter a numeric Quantity (e.g., 10).")
-        return INVOICE_QTY # Stay in same state
+        await update.message.reply_text("❌ Invalid number. Please enter a number (e.g., 10).")
+        return INVOICE_QTY
 
-    # Prepare Confirmation Summary
+    # Summary Data
     debtor = context.user_data['inv_debtor']
     item = context.user_data['inv_item']
     desc = context.user_data['inv_desc']
     price = context.user_data['inv_price']
     total = qty * price
-    
-    confirm_kb = [
-        [
-            InlineKeyboardButton("✅ Confirm Invoice", callback_data="inv_confirm_yes"),
-            InlineKeyboardButton("❌ Cancel", callback_data="inv_confirm_no")
-        ]
+
+    # Buttons
+    keyboard = [
+        [InlineKeyboardButton("✅ Confirm Invoice", callback_data="inv_confirm_yes")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="inv_confirm_no")]
     ]
     
     msg = (
         "📝 **Confirm Invoice Details**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         f"👤 Customer: `{debtor}`\n"
-        f"📦 Item: {desc} (`{item}`)\n"
+        f"📦 Item: {desc}\n"
         f"🔢 Qty: {qty} x RM {price:,.2f}\n"
         f"💵 **Total: RM {total:,.2f}**\n"
         "━━━━━━━━━━━━━━━━━━\n"
         "Create this invoice now?"
     )
     
-    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(confirm_kb), parse_mode='Markdown')
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
     return INVOICE_CONFIRM
 
 async def complete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Final Step: Call API or Cancel"""
+    """Final Action: Call API"""
     query = update.callback_query
     await query.answer()
     
     if query.data == "inv_confirm_yes":
         await query.message.edit_text("⏳ Sending data to AutoCount...")
         
-        # Call API
-        result = invoice_api.create_invoice(
+        res = invoice_api.create_invoice(
             debtor_code=context.user_data['inv_debtor'],
             item_code=context.user_data['inv_item'],
             qty=context.user_data['inv_qty'],
             unit_price=context.user_data['inv_price']
         )
         
-        if result['success']:
-            await query.message.edit_text(f"✅ **Success!**\nInvoice created: `{result['doc_no']}`", parse_mode='Markdown')
+        if res['success']:
+            await query.message.edit_text(f"✅ **Success!**\nInvoice Created: `{res['doc_no']}`", parse_mode='Markdown')
         else:
-            await query.message.edit_text(f"❌ **Failed**\nError: {result.get('error')}", parse_mode='Markdown')
+            await query.message.edit_text(f"❌ **Failed**\nError: {res.get('error')}", parse_mode='Markdown')
             
     else:
         await query.message.edit_text("❌ Invoice creation cancelled.")
@@ -168,27 +167,15 @@ async def complete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     return ConversationHandler.END
 
 async def cancel_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Abort conversation"""
     await update.message.reply_text("❌ Operation cancelled.", reply_markup=get_main_menu())
     return ConversationHandler.END
 
-
-# --- STANDARD BUTTON HANDLER ---
+# --- STANDARD HANDLERS ---
 async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Handles main menu buttons (READ-ONLY functions)"""
+    """Handles standard menu buttons (non-wizard)"""
     query = update.callback_query
-    # Note: We DON'T answer() here immediately if we pass through logic, 
-    # but for simple buttons we do.
-    
-    data = query.data
-    
-    # If it's the Create Invoice button, it shouldn't be handled here directly 
-    # if using ConversationHandler entry_points. 
-    # However, sometimes it's cleaner to handle mixed logic.
-    # For this setup, ConversationHandler filters will catch 'btn_create_invoice' 
-    # BEFORE this function if configured correctly in main.py.
-    
     await query.answer()
+    data = query.data
     
     if data == 'btn_sales_today':
         target_date = datetime.now().strftime("%Y/%m/%d")
@@ -232,15 +219,12 @@ async def handle_button_click(update: Update, context: ContextTypes.DEFAULT_TYPE
     elif data == 'btn_help':
         msg = (
             "💡 **How to use AutoCount AI**\n\n"
-            "**1. Create Invoice:** Click the button and follow the steps.\n"
-            "**2. Check Data:** Click reports for quick views.\n"
-            "**3. Chat Naturally:**\n"
-            "• 'Check stock for iPhone'\n"
-            "• 'Sales for 25th Dec'\n"
+            "**1. Create Invoice:** Click 'Create Invoice' in the menu.\n"
+            "**2. Check Reports:** Click the dashboard buttons.\n"
+            "**3. Chat:** Type 'Check stock for iPhone' or 'Sales today'."
         )
         await query.message.reply_text(msg, parse_mode='Markdown')
 
-# --- TEXT HANDLER ---
 async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_text = update.message.text
     
@@ -250,102 +234,42 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
     intent = intent_data.get("intent")
     args = intent_data.get("args", {})
     
-    print(f"🧠 Intent: {intent} | Args: {args}")
-    
     await context.bot.delete_message(chat_id=status_msg.chat_id, message_id=status_msg.message_id)
 
-    # --- SALES HANDLERS ---
     if intent == "compare_sales":
         date1 = args.get("date1")
         date2 = args.get("date2")
-        
-        await update.message.reply_text(f"📊 Comparing {date1} vs {date2}...")
         s1 = sales_api.get_sales_dashboard(date1)
         s2 = sales_api.get_sales_dashboard(date2)
-        
         if s1 and s2:
             diff = s1['sales'] - s2['sales']
             icon = "🟢" if diff >= 0 else "🔴"
-            msg = (
-                f"⚔️ **Sales Comparison**\n"
-                f"📅 **{s1['date']}**: RM {s1['sales']:,.2f}\n"
-                f"📅 **{s2['date']}**: RM {s2['sales']:,.2f}\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"Difference: {icon} RM {abs(diff):,.2f}"
-            )
+            msg = f"⚔️ **Comparison**\n{s1['date']}: RM {s1['sales']:,.2f}\n{s2['date']}: RM {s2['sales']:,.2f}\nDiff: {icon} RM {abs(diff):,.2f}"
             await update.message.reply_text(msg, parse_mode='Markdown')
         else:
-            await update.message.reply_text("❌ Could not fetch data for one or both dates.")
+            await update.message.reply_text("❌ Error fetching data.")
 
     elif intent == "get_sales":
         target_date = args.get("date")
-        await update.message.reply_text(f"📆 Fetching sales for {target_date}...")
-        
         s = sales_api.get_sales_dashboard(target_date)
         if s:
-            icon = "📈" if s['sales'] >= s['prev_sales'] else "📉"
-            await update.message.reply_text(
-                f"📅 **Sales: {s['date']}**\n"
-                f"💵 Revenue: RM {s['sales']:,.2f}\n"
-                f"🧾 Invoices: {s['count']}\n"
-                f"({icon} vs Prev Day: RM {s['prev_sales']:,.2f})", 
-                parse_mode='Markdown'
-            )
+            await update.message.reply_text(f"📅 **Sales {s['date']}**: RM {s['sales']:,.2f}", parse_mode='Markdown')
         else:
-            await update.message.reply_text("❌ No sales data found for this date.")
+            await update.message.reply_text("❌ No data.")
 
-    # --- DEBTOR HANDLERS ---
     elif intent == "list_debtors_outstanding":
-        limit = args.get("limit", 5)
-        await update.message.reply_text(f"📉 Fetching Top {limit} Debtors...")
-        data = debtor_api.get_debtor_outstanding(limit)
-        msg = f"🏆 **Top {len(data)} Debtors**\n" + "\n".join([f"• {d['CompanyName']}: RM {d['show_bal']:,.2f}" for d in data]) if data else "✅ No debt."
-        await update.message.reply_text(msg, parse_mode='Markdown')
-
-    elif intent == "list_all_debtors":
-        await update.message.reply_text("📂 Fetching Customer Directory...")
-        data = debtor_api.get_all_debtors(20)
-        msg = "📂 **Customer List**\n" + "\n".join([f"• `{d['AccNo']}` {d['CompanyName']}" for d in data]) if data else "❌ No customers."
-        await update.message.reply_text(msg, parse_mode='Markdown')
-
-    elif intent == "profile_debtor":
-        kw = args.get("keyword")
-        await update.message.reply_text(f"🔍 Searching customer '{kw}'...")
-        d = debtor_api.get_debtor_profile(kw)
-        if d:
-            addr = ", ".join(filter(None, [d.get(f'Address{i}') for i in range(1,5)] + [d.get('PostCode'), d.get('State')])) or "N/A"
-            msg = (f"👤 **{d['CompanyName']}**\n🆔 `{d['AccNo']}`\n💰 Bal: RM {d['show_bal']:,.2f}\n"
-                   f"📍 {addr}\n📞 {d.get('Phone1', 'N/A')} | 📠 {d.get('Fax1', 'N/A')}\n"
-                   f"💳 Limit: RM {d.get('CreditLimit',0):,.2f} | 📅 Term: {d.get('DisplayTerm','N/A')}")
-            await update.message.reply_text(msg, parse_mode='Markdown')
-        else:
-            await update.message.reply_text("❌ Customer not found.")
-
-    # --- STOCK HANDLERS ---
-    elif intent == "list_all_stock":
-        await update.message.reply_text("📦 Fetching Item Catalog...")
-        data = stock_api.get_stock_list(20)
-        msg = "📦 **Item Catalog**\n" + "\n".join([f"• `{i['ItemCode']}` {i['Description']}: **{i['show_qty']}**" for i in data]) if data else "❌ No items."
+        data = debtor_api.get_debtor_outstanding(args.get("limit", 5))
+        msg = "🏆 **Top Debtors**\n" + "\n".join([f"• {d['CompanyName']}: RM {d['show_bal']:,.2f}" for d in data]) if data else "✅ No debt."
         await update.message.reply_text(msg, parse_mode='Markdown')
 
     elif intent == "profile_stock":
         kw = args.get("keyword")
-        await update.message.reply_text(f"🔎 Checking stock '{kw}'...")
         i = stock_api.get_stock_profile(kw)
         if i:
-            msg = (
-                f"📦 **{i['Description']}**\n"
-                f"🔢 Code: `{i['ItemCode']}`\n"
-                f"📊 **Stock: {i['show_qty']} {i.get('UOM','UNIT')}**\n"
-                f"━━━━━━━━━━━━━━━━━━\n"
-                f"💵 Price: RM {i.get('RefPrice', i.get('Price', 0.0)):,.2f}\n"
-                f"🛠 Cost: RM {i.get('StdCost', 0.0):,.2f}\n"
-                f"📂 Group: {i.get('ItemGroup', 'N/A')} | Type: {i.get('ItemType', 'N/A')}\n"
-            )
+            msg = f"📦 **{i['Description']}**\nCode: `{i['ItemCode']}`\nQty: {i['show_qty']}\nPrice: RM {i.get('Price',0):,.2f}"
             await update.message.reply_text(msg, parse_mode='Markdown')
         else:
             await update.message.reply_text("❌ Item not found.")
 
     else:
-        # Fallback to Menu
         await start_command(update, context)
