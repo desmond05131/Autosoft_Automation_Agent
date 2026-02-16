@@ -36,6 +36,7 @@
     <Compile Include="src\bot\handlers.py" />
     <Compile Include="src\__init__.py" />
     <Compile Include="src\bot\utils.py" />
+    <Compile Include="tests\test_invoice.py" />
   </ItemGroup>
   <ItemGroup>
     <Interpreter Include="env\">
@@ -49,6 +50,7 @@
     </Interpreter>
   </ItemGroup>
   <ItemGroup>
+    <Folder Include="tests\" />
     <Folder Include="src\api\" />
     <Folder Include="src\bot\" />
     <Folder Include="src\ai\" />

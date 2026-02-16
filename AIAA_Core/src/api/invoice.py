@@ -4,20 +4,22 @@ def create_invoice(debtor_code, item_code, qty, unit_price):
     """
     Creates a simple Invoice (IV) in AutoCount.
     """
-    # Payload structure with E-Invoice fields
+    # Payload structure
     payload = [
         {
             "DebtorCode": debtor_code,
             "DocStatus": "A",             # A = Active
             "SubmitEInvoice": "T",        # Enable E-Invoice features
             "ConsolidatedEInvoice": "F",  # Not a consolidated invoice
-            "SubmitInvoiceNow": "F",      # REQUIRED FIX: Do not auto-submit to LHDN immediately
+            # --- FIX BELOW ---
+            "SubmitInvoiceNow": "F",      # Required by your DB version. F = Draft/Do not submit to LHDN yet.
+            # -----------------
             "IVDTL": [
                 {
                     "ItemCode": item_code,
                     "Qty": qty,
                     "UnitPrice": unit_price,
-                    # Optional: "TaxCode": "GST-0"
+                    # "TaxCode": "GST-0" # Uncomment if your system enforces tax codes
                 }
             ]
         }
@@ -27,15 +29,28 @@ def create_invoice(debtor_code, item_code, qty, unit_price):
         response = api_client.post("api/Invoice", json_payload=payload)
         
         # Check for success
-        if response and isinstance(response, dict):
-            status = response.get("Status", "")
-            # API can return "Success" or just a ResultTable
-            if status == "Success" or response.get("ResultTable"):
+        # API returns a list containing the result object(s) or a dict with Status
+        if response:
+            # Handle list response (common in creating docs)
+            if isinstance(response, list) and len(response) > 0:
+                result_item = response[0]
+                # If we get a result item with DocNo, it succeeded
+                if "DocNo" in result_item:
+                    return {"success": True, "doc_no": result_item["DocNo"]}
+            
+            # Handle dict response
+            elif isinstance(response, dict):
+                status = response.get("Status", "")
                 result_table = response.get("ResultTable", [])
-                doc_no = result_table[0].get("DocNo") if result_table else "New Invoice"
-                return {"success": True, "doc_no": doc_no}
+                
+                if status == "Success" or (result_table and len(result_table) > 0):
+                    # Try to extract DocNo from ResultTable if available
+                    doc_no = "New Invoice"
+                    if result_table and isinstance(result_table, list):
+                        doc_no = result_table[0].get("DocNo", "New Invoice")
+                    return {"success": True, "doc_no": doc_no}
         
-        # If API returns a failure message structure
+        # If we reach here, consider it a failure and return the raw response for debugging
         return {"success": False, "error": str(response)}
         
     except Exception as e:
