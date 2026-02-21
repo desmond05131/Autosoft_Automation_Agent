@@ -14,16 +14,11 @@ from src.bot.handlers import (
     start_command, 
     handle_text_message, 
     handle_button_click,
-    start_invoice_flow,
-    receive_debtor,
-    receive_item,
-    receive_qty,
-    complete_invoice,
-    cancel_invoice,
-    INVOICE_DEBTOR,
-    INVOICE_ITEM,
-    INVOICE_QTY,
-    INVOICE_CONFIRM
+    start_invoice_flow, receive_debtor, receive_item, receive_qty, complete_invoice, cancel_invoice,
+    INVOICE_DEBTOR, INVOICE_ITEM, INVOICE_QTY, INVOICE_CONFIRM,
+    # Add the new imports below:
+    start_debtor_flow, receive_debtor_name, receive_debtor_phone, complete_debtor,
+    DEBTOR_NAME, DEBTOR_PHONE, DEBTOR_CONFIRM
 )
 
 logging.basicConfig(
@@ -55,6 +50,22 @@ if __name__ == '__main__':
             fallbacks=[CommandHandler("cancel", cancel_invoice)]
         )
         application.add_handler(invoice_conv)
+
+        # --- REGISTER INVOICE WIZARD (MUST BE FIRST) ---
+        # (Existing invoice_conv code here...)
+        application.add_handler(invoice_conv)
+
+        # --- REGISTER DEBTOR WIZARD (NEW) ---
+        debtor_conv = ConversationHandler(
+            entry_points=[CallbackQueryHandler(start_debtor_flow, pattern='^btn_create_debtor$')],
+            states={
+                DEBTOR_NAME: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_debtor_name)],
+                DEBTOR_PHONE: [MessageHandler(filters.TEXT & ~filters.COMMAND, receive_debtor_phone)],
+                DEBTOR_CONFIRM: [CallbackQueryHandler(complete_debtor, pattern='^debtor_confirm_')]
+            },
+            fallbacks=[CommandHandler("cancel", cancel_invoice)] # Reuse cancel UI
+        )
+        application.add_handler(debtor_conv)
         
         # --- STANDARD HANDLERS ---
         application.add_handler(CommandHandler("start", start_command))

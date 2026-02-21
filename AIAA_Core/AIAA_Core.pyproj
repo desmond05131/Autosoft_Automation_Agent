@@ -36,6 +36,8 @@
     <Compile Include="src\bot\handlers.py" />
     <Compile Include="src\__init__.py" />
     <Compile Include="src\bot\utils.py" />
+    <Compile Include="tests\module1.py" />
+    <Compile Include="tests\module2.py" />
     <Compile Include="tests\test_invoice.py" />
   </ItemGroup>
   <ItemGroup>

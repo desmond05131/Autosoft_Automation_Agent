@@ -9,12 +9,14 @@ import src.api.invoice as invoice_api
 
 # --- CONVERSATION STATES ---
 INVOICE_DEBTOR, INVOICE_ITEM, INVOICE_QTY, INVOICE_CONFIRM = range(4)
+DEBTOR_NAME, DEBTOR_PHONE, DEBTOR_CONFIRM = range(4, 7) # Add these new states
 
 # --- MENU BUILDER ---
 def get_main_menu():
     keyboard = [
         [
-            InlineKeyboardButton("➕ Create Invoice", callback_data="btn_create_invoice")
+            InlineKeyboardButton("➕ Create Invoice", callback_data="btn_create_invoice"),
+             InlineKeyboardButton("➕ Create Debtor", callback_data="btn_create_debtor") # New Button
         ],
         [
             InlineKeyboardButton("📊 Today's Sales", callback_data="btn_sales_today"),
@@ -168,6 +170,80 @@ async def complete_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def cancel_invoice(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("❌ Operation cancelled.", reply_markup=get_main_menu())
+    return ConversationHandler.END
+
+# --- DEBTOR WIZARD HANDLERS ---
+
+async def start_debtor_flow(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 1: Init Wizard -> Ask Debtor Name"""
+    query = update.callback_query
+    await query.answer()
+    
+    await query.message.reply_text(
+        "🆕 **New Customer Wizard**\n\n"
+        "Step 1/2: Please enter the **Company/Customer Name**.\n"
+        "*(e.g., WWI Enterprise)*"
+    )
+    return DEBTOR_NAME
+
+async def receive_debtor_name(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 2: Save Name -> Ask Phone"""
+    user_input = update.message.text.strip()
+    context.user_data['new_debtor_name'] = user_input
+    
+    await update.message.reply_text(
+        f"✅ Name set to: `{user_input}`\n\n"
+        "Step 2/2: Please enter the **Contact Number**.\n"
+        "*(Type 'skip' if not applicable)*"
+    )
+    return DEBTOR_PHONE
+
+async def receive_debtor_phone(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Step 3: Save Phone -> Ask Confirmation"""
+    phone = update.message.text.strip()
+    context.user_data['new_debtor_phone'] = "" if phone.lower() == 'skip' else phone
+
+    name = context.user_data['new_debtor_name']
+    phone_display = context.user_data['new_debtor_phone'] or "N/A"
+
+    keyboard = [
+        [InlineKeyboardButton("✅ Confirm Creation", callback_data="debtor_confirm_yes")],
+        [InlineKeyboardButton("❌ Cancel", callback_data="debtor_confirm_no")]
+    ]
+    
+    msg = (
+        "📝 **Confirm Customer Details**\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        f"🏢 Name: `{name}`\n"
+        f"📞 Phone: `{phone_display}`\n"
+        "━━━━━━━━━━━━━━━━━━\n"
+        "Create this customer now?"
+    )
+    
+    await update.message.reply_text(msg, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+    return DEBTOR_CONFIRM
+
+async def complete_debtor(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Final Action: Call API"""
+    query = update.callback_query
+    await query.answer()
+    
+    if query.data == "debtor_confirm_yes":
+        await query.message.edit_text("⏳ Sending data to AutoCount...")
+        
+        res = debtor_api.create_debtor(
+            company_name=context.user_data['new_debtor_name'],
+            phone1=context.user_data['new_debtor_phone']
+        )
+        
+        if res['success']:
+            await query.message.edit_text(f"✅ **Success!**\nCustomer Created! AutoCount Account No: `{res['acc_no']}`", parse_mode='Markdown')
+        else:
+            await query.message.edit_text(f"❌ **Failed**\nError: {res.get('error')}", parse_mode='Markdown')
+            
+    else:
+        await query.message.edit_text("❌ Customer creation cancelled.")
+        
     return ConversationHandler.END
 
 # --- STANDARD HANDLERS ---

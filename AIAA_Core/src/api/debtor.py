@@ -1,5 +1,41 @@
 from src.api.client import api_client
 
+# Add this function to the bottom of src/api/debtor.py
+
+def create_debtor(company_name, phone1="", address1="", register_no=""):
+    """
+    Creates a new Debtor in AutoCount.
+    """
+    # Payload matching the API documentation requirements + fixing the PeppolFormat error
+    payload = {
+        "DebtorType": "G01-A", 
+        "CompanyName": company_name,
+        "RegisterNo": register_no,
+        "IsGroupCompany": "F",
+        "IsActive": "T",
+        "IsCashSaleDebtor": "F",
+        "TaxEntityID": "1",
+        "Address1": address1,
+        "Phone1": phone1,
+        "StatementType": "O",
+        "AgingOn": "I",
+        # Added to fix: "Column 'SGEInvoicePeppolFormat' does not allow nulls"
+        "SGEInvoicePeppolFormat": ""  
+    }
+    
+    try:
+        response = api_client.post("api/Debtor/", json_payload=payload)
+        
+        if response and isinstance(response, list) and len(response) > 0:
+            result_item = response[0]
+            if "AccNo" in result_item:
+                return {"success": True, "acc_no": result_item["AccNo"]}
+                
+        return {"success": False, "error": str(response)}
+        
+    except Exception as e:
+        return {"success": False, "error": str(e)}
+
 def _get_balance(item):
     """Calculates balance checking multiple potential keys."""
     for key in ['Balance', 'Outstanding', 'CurBalance', 'NetTotal']:
