@@ -11,12 +11,13 @@ def test_manual_create_debtor():
     
     print(f"📦 Sending Request: Company={company_name}, Phone={phone1}")
     
-    # Call the function
+    # Call the function and pass 'BIS'
     result = create_debtor(
         company_name=company_name, 
         phone1=phone1,
         address1=address1,
-        register_no=register_no
+        register_no=register_no,
+        peppol_format="BIS"
     )
     
     print("\n-----------------------------")

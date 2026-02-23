@@ -2,25 +2,30 @@ from src.api.client import api_client
 
 # Add this function to the bottom of src/api/debtor.py
 
-def create_debtor(company_name, phone1="", address1="", register_no=""):
+from src.api.client import api_client
+
+from src.api.client import api_client
+
+def create_debtor(company_name, phone1="", address1="", register_no="", peppol_format="BIS"):
     """
     Creates a new Debtor in AutoCount.
     """
-    # Payload matching the API documentation requirements + fixing the PeppolFormat error
+    # Payload matching the API documentation requirements + fixing the TaxEntity error
     payload = {
-        "DebtorType": "G01-A", 
+        # Changed from "G01-A" to None (matches your existing data which has NULL)
+        "DebtorType": None, 
         "CompanyName": company_name,
         "RegisterNo": register_no,
         "IsGroupCompany": "F",
         "IsActive": "T",
         "IsCashSaleDebtor": "F",
-        "TaxEntityID": "1",
+        # Changed from "1" to None (matches your existing data where TaxEntityID is NULL)
+        "TaxEntityID": None,
         "Address1": address1,
         "Phone1": phone1,
         "StatementType": "O",
         "AgingOn": "I",
-        # Added to fix: "Column 'SGEInvoicePeppolFormat' does not allow nulls"
-        "SGEInvoicePeppolFormat": ""  
+        "SGEInvoicePeppolFormat": peppol_format  
     }
     
     try:
@@ -35,6 +40,9 @@ def create_debtor(company_name, phone1="", address1="", register_no=""):
         
     except Exception as e:
         return {"success": False, "error": str(e)}
+
+
+
 
 def _get_balance(item):
     """Calculates balance checking multiple potential keys."""

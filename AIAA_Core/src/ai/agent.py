@@ -21,6 +21,7 @@ Available Intents:
 5. "profile_debtor" -> Args: {{"keyword": "name_or_code"}}
 6. "list_all_stock" -> Args: {{}}
 7. "profile_stock" -> Args: {{"keyword": "item_name_or_code"}}
+8. "create_invoice_fast" -> Args: {{"debtor": "code_or_name", "item": "code_or_name", "qty": number}}
 
 CRITICAL: Convert ALL dates to "YYYY/MM/DD" format.
 
@@ -30,6 +31,7 @@ Examples:
 "Who owes money" -> {{"intent": "list_debtors_outstanding", "args": {{"limit": 5}}}}
 "Check stock Apple" -> {{"intent": "profile_stock", "args": {{"keyword": "Apple"}}}}
 "Customer list" -> {{"intent": "list_all_debtors", "args": {{}}}}
+"Create invoice for 300-T001 for 5 Apple" -> {{"intent": "create_invoice_fast", "args": {{"debtor": "300-T001", "item": "Apple", "qty": 5}}}}
 """
 
 def interpret_intent(user_text):
