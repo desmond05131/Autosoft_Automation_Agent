@@ -415,5 +415,27 @@ async def handle_text_message(update: Update, context: ContextTypes.DEFAULT_TYPE
         else:
             await update.message.reply_text("❌ Item not found.")
 
+    elif intent == "profile_debtor":
+        kw = args.get("keyword")
+        d = debtor_api.get_debtor_profile(kw)
+        if d:
+            # Format the debtor details nicely
+            balance = d.get('show_bal', 0.0)
+            credit_limit = d.get('CreditLimit', 0.0)
+            phone = d.get('Phone1', 'N/A')
+            term = d.get('CreditTerm', 'N/A')
+            
+            msg = (
+                f"🏢 **Customer Profile: {d['CompanyName']}**\n"
+                f"🆔 Code: `{d['AccNo']}`\n"
+                f"📞 Phone: {phone}\n"
+                f"💰 Balance: RM {balance:,.2f}\n"
+                f"💳 Limit: RM {credit_limit:,.2f}\n"
+                f"📅 Term: {term}"
+            )
+            await update.message.reply_text(msg, parse_mode='Markdown')
+        else:
+            await update.message.reply_text(f"❌ Customer '{kw}' not found.")
+
     else:
         await start_command(update, context)

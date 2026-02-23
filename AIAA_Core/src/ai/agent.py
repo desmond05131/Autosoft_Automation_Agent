@@ -29,6 +29,7 @@ Examples:
 "Sales today" -> {{"intent": "get_sales", "args": {{"date": "{current_date}"}}}}
 "Compare sales 29 Jan vs 12 Aug" -> {{"intent": "compare_sales", "args": {{"date1": "2026/01/29", "date2": "2026/08/12"}}}}
 "Who owes money" -> {{"intent": "list_debtors_outstanding", "args": {{"limit": 5}}}}
+"Get debtor Green" -> {{"intent": "profile_debtor", "args": {{"keyword": "Green"}}}}   <-- ADD THIS LINE
 "Check stock Apple" -> {{"intent": "profile_stock", "args": {{"keyword": "Apple"}}}}
 "Customer list" -> {{"intent": "list_all_debtors", "args": {{}}}}
 "Create invoice for 300-T001 for 5 Apple" -> {{"intent": "create_invoice_fast", "args": {{"debtor": "300-T001", "item": "Apple", "qty": 5}}}}
